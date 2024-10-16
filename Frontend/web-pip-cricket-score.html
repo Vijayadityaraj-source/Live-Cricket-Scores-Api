@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Live Cricket Scores with PiP</title>
+    <!-- Bootstrap CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body {
+            padding-top: 20px;
+        }
+        .scoreCard {
+            height: 100%;
+        }
+        .pipVideo {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1 class="text-center mb-4">Live Cricket Scores</h1>
+        <div id="matchContainer" class="row row-cols-1 row-cols-md-2 row-cols-lg-3 g-4"></div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        const matchContainer = document.getElementById('matchContainer');
+        const apiUrl = 'https://live-cricket-scores-api.onrender.com/api/livescores';
+
+        function formatMatchTitle(title) {
+            const parts = title.split(' v ');
+            if (parts.length !== 2) return title;
+
+            const [team1, team2] = parts;
+            const team1Parts = team1.split(' ');
+            let team1Score = team1Parts.pop();
+            let team1Name = team1Parts.join(' ');
+
+            // Check if the last part is actually a score
+            if (!team1Score.includes('/') && !team1Score.includes('*')) {
+                team1Name = team1;
+                team1Score = '';
+            }
+
+            const team2Parts = team2.split(' ');
+            let team2Score = '';
+            let team2Name = team2;
+
+            // Check if team2 has a score
+            if (team2Parts[team2Parts.length - 1].includes('/') || team2Parts[team2Parts.length - 1].includes('*')) {
+                team2Score = team2Parts.pop();
+                team2Name = team2Parts.join(' ');
+            }
+
+            return {
+                team1Name,
+                team1Score,
+                team2Name,
+                team2Score
+            };
+        }
+
+        function wrapText(ctx, text, x, y, maxWidth, lineHeight) {
+            const words = text.split(' ');
+            let line = '';
+            let lines = [];
+
+            for (let n = 0; n < words.length; n++) {
+                const testLine = line + words[n] + ' ';
+                const metrics = ctx.measureText(testLine);
+                const testWidth = metrics.width;
+                if (testWidth > maxWidth && n > 0) {
+                    lines.push(line);
+                    line = words[n] + ' ';
+                } else {
+                    line = testLine;
+                }
+            }
+            lines.push(line);
+
+            for (let i = 0; i < lines.length; i++) {
+                ctx.fillText(lines[i], x, y + (i * lineHeight));
+            }
+
+            return lines.length;
+        }
+
+        async function fetchLiveScores() {
+            try {
+                const response = await fetch(apiUrl);
+                const matches = await response.json();
+
+                matchContainer.innerHTML = '';
+
+                matches.forEach(match => {
+                    const scoreCard = document.createElement('div');
+                    scoreCard.className = 'col';
+                    scoreCard.innerHTML = `
+                        <div class="card scoreCard">
+                            <div class="card-body">
+                                <h5 class="card-title">${match.title}</h5>
+                                <video class="pipVideo" muted></video>
+                                <button class="btn btn-primary pipButton mt-3">Enter Picture-in-Picture</button>
+                            </div>
+                        </div>
+                    `;
+
+                    const pipVideo = scoreCard.querySelector('.pipVideo');
+                    const pipButton = scoreCard.querySelector('.pipButton');
+
+                    // Create a canvas to draw our score
+                    const canvas = document.createElement('canvas');
+                    canvas.width = 320;
+                    canvas.height = 180;
+                    const ctx = canvas.getContext('2d');
+
+                    // Draw score on canvas
+                    ctx.fillStyle = '#212529'; // Dark background
+                    ctx.fillRect(0, 0, canvas.width, canvas.height);
+                    ctx.fillStyle = '#ffffff'; // White text
+                    ctx.textAlign = 'center';
+
+                    const formattedTitle = formatMatchTitle(match.title);
+                    
+                    if (typeof formattedTitle === 'string') {
+                        // If formatting failed, display the original title
+                        ctx.font = '20px Arial';
+                        wrapText(ctx, formattedTitle, 160, 90, 300, 25);
+                    } else {
+                        // Display formatted match information
+                        ctx.font = '18px Arial';
+                        let y = 40;
+                        y += wrapText(ctx, formattedTitle.team1Name, 160, y, 300, 25) * 25;
+                        
+                        if (formattedTitle.team1Score) {
+                            ctx.font = 'bold 24px Arial';
+                            ctx.fillText(formattedTitle.team1Score, 160, y);
+                            y += 30;
+                        }
+
+                        ctx.font = '18px Arial';
+                        ctx.fillText('vs', 160, y);
+                        y += 25;
+
+                        y += wrapText(ctx, formattedTitle.team2Name, 160, y, 300, 25) * 25;
+
+                        if (formattedTitle.team2Score) {
+                            ctx.font = 'bold 24px Arial';
+                            ctx.fillText(formattedTitle.team2Score, 160, y);
+                        }
+                    }
+
+                    // Set up video stream from canvas
+                    const stream = canvas.captureStream();
+                    pipVideo.srcObject = stream;
+                    pipVideo.play();
+
+                    pipButton.addEventListener('click', async () => {
+                        try {
+                            if (document.pictureInPictureElement) {
+                                await document.exitPictureInPicture();
+                            } else {
+                                await pipVideo.requestPictureInPicture();
+                            }
+                        } catch (error) {
+                            console.error('Error:', error);
+                        }
+                    });
+
+                    // Update button text when PiP state changes
+                    pipVideo.addEventListener('enterpictureinpicture', () => {
+                        pipButton.textContent = 'Exit Picture-in-Picture';
+                    });
+
+                    pipVideo.addEventListener('leavepictureinpicture', () => {
+                        pipButton.textContent = 'Enter Picture-in-Picture';
+                    });
+
+                    matchContainer.appendChild(scoreCard);
+                });
+            } catch (error) {
+                console.error('Error fetching live scores:', error);
+                matchContainer.innerHTML = `<p class="text-danger">Error fetching live scores: ${error.message}</p>`;
+            }
+        }
+
+        // Fetch scores initially and then every 5 seconds
+        fetchLiveScores();
+        setInterval(fetchLiveScores, 5000);
+    </script>
+</body>
+</html>
